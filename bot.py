@@ -1,14 +1,4 @@
-Of course. I have removed the hardcoded bot token and replaced it with a secure method that loads the token from your hosting environment's variables.
 
-This is the industry-standard way to handle sensitive credentials. It prevents your token from being accidentally exposed.
-
------
-
-### \#\# Corrected Code
-
-Here is the updated script. You will need to set the `TELEGRAM_BOT_TOKEN` environment variable in your Render dashboard for this code to work.
-
-```python
 import logging
 import os
 import asyncio
@@ -203,3 +193,4 @@ def main() -> None:
 if __name__ == '__main__':
     main()
 ```
+
