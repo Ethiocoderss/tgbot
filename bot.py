@@ -6,6 +6,7 @@ import math
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from yt_dlp.utils import DownloadError # Import specific exception
 
 # --- Configuration & Logging ---
 logging.basicConfig(
@@ -15,7 +16,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- SECURED TOKEN ---
-# This code now safely reads the token from the hosting environment.
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("No TELEGRAM_BOT_TOKEN found in environment variables.")
@@ -65,10 +65,10 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         
         keyboard = []
         
-        # --- 1. VIDEO BUTTONS (Added to the list first) ---
+        # --- 1. VIDEO BUTTONS ---
         video_formats = sorted(
-            [f for f in formats if f.get('vcodec') != 'none' and f.get('ext') == 'mp4' and f.get('height')], 
-            key=lambda x: x.get('height', 0), 
+            [f for f in formats if f.get('vcodec') != 'none' and f.get('ext') == 'mp4' and f.get('height')],
+            key=lambda x: x.get('height', 0),
             reverse=True
         )
         
@@ -78,14 +78,13 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if height and height not in added_resolutions:
                 added_resolutions.add(height)
                 file_size = f.get('filesize') or f.get('filesize_approx')
-                # We now send the height (e.g., 720) in the callback data for flexibility
                 keyboard.append([InlineKeyboardButton(f"🎬 {height}p {format_size(file_size)}", callback_data=f"video:{video_id}:{height}")])
 
-        # --- 2. AUDIO BUTTON (Added to the list last) ---
+        # --- 2. AUDIO BUTTON ---
         best_audio = next((f for f in reversed(formats) if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('ext') in ['m4a', 'webm', 'mp3']), None)
         if best_audio:
-            keyboard.append([InlineKeyboardButton(f"🎵 Audio {format_size(best_audio.get('filesize') or best_audio.get('filesize_approx'))}", callback_data=f"audio:{video_id}:{best_audio['format_id']}")])
-
+            file_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
+            keyboard.append([InlineKeyboardButton(f"🎵 Audio {format_size(file_size)}", callback_data=f"audio:{video_id}:{best_audio['format_id']}")])
 
         if not keyboard:
             await processing_message.edit_text("Sorry, no suitable download formats were found.")
@@ -100,17 +99,29 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             await update.message.reply_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
 
+    # --- CORRECTED ERROR HANDLING ---
+    except DownloadError as e:
+        logger.error(f"yt-dlp DownloadError in url_handler: {e}")
+        error_str = str(e).lower()
+        if "video unavailable" in error_str or "private video" in error_str:
+            await processing_message.edit_text("❌ Failed: This video is private, has been deleted, or is unavailable.")
+        elif "is not a valid url" in error_str:
+            await processing_message.edit_text("❌ This doesn't look like a valid link. Please try again.")
+        else:
+            await processing_message.edit_text("❌ Failed to process the link. The video may be region-locked or unsupported.")
     except Exception as e:
-        logger.error(f"Error processing URL: {e}")
-        await processing_message.edit_text("❌ Failed to process link. It might be invalid or unsupported.")
+        logger.error(f"Generic error in url_handler: {e}")
+        await processing_message.edit_text("❌ An unexpected error occurred. Please try again later.")
+
 
 async def download_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles button presses to download and merge the selected format."""
     query = update.callback_query
     await query.answer()
 
-    # The third part is now resolution (e.g., "720") or a format_id for audio
     download_type, video_id, quality_or_id = query.data.split(':')
+    
+    # --- CORRECTED URL FORMAT ---
     url = f"https://www.youtube.com/watch?v={video_id}"
     
     file_path = f"{query.from_user.id}_{video_id}.{'m4a' if download_type == 'audio' else 'mp4'}"
@@ -118,20 +129,20 @@ async def download_button_callback(update: Update, context: ContextTypes.DEFAULT
     try:
         await query.edit_message_caption(caption="⏳ Preparing download...")
     except Exception:
-        pass
+        pass # Ignore if caption can't be edited (e.g., on text message)
 
-    download_format = quality_or_id # Default to the ID for audio
+    download_format = quality_or_id # Default to the format_id for audio
     if download_type == 'video':
-        # This flexible format selector tells yt-dlp to get the best video AT OR BELOW the chosen quality
         height = quality_or_id
-        download_format = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        # Improved format selector for better compatibility
+        download_format = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best"
 
     ydl_opts = {
         'format': download_format,
         'outtmpl': file_path,
         'quiet': True,
         'noplaylist': True,
-        'merge_output_format': 'mp4', # This forces the final container to be MP4
+        'merge_output_format': 'mp4',
     }
 
     try:
@@ -151,10 +162,14 @@ async def download_button_callback(update: Update, context: ContextTypes.DEFAULT
         
         await query.message.delete()
         
+    # --- CORRECTED ERROR HANDLING ---
+    except DownloadError as e:
+        logger.error(f"Error during download (yt-dlp): {e}")
+        error_message = r"❌ *Download Failed*\n\nThis might be due to a YouTube error or a protected video\. If this problem persists, the server's FFmpeg installation may be incomplete\."
+        await query.edit_message_caption(caption=error_message, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
-        logger.error(f"Error in download/upload: {e}")
-        # Using a raw string r"..." to prevent SyntaxWarning
-        error_message = r"❌ *Download Failed*\n\nThis could be due to a YouTube error, a protected video, or a missing FFmpeg installation\."
+        logger.error(f"Generic error during download: {e}")
+        error_message = r"❌ *An Unexpected Error Occurred*\n\nPlease try again later\."
         await query.edit_message_caption(caption=error_message, parse_mode=ParseMode.MARKDOWN_V2)
         
     finally:
