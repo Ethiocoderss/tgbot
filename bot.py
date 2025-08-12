@@ -100,7 +100,6 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         else:
             await update.message.reply_text(caption, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2)
 
-    # --- Robust Error Handling ---
     except DownloadError as e:
         logger.error(f"yt-dlp DownloadError in url_handler: {e}")
         error_str = str(e).lower()
@@ -162,11 +161,11 @@ async def download_button_callback(update: Update, context: ContextTypes.DEFAULT
         
     except DownloadError as e:
         logger.error(f"Error during download (yt-dlp): {e}")
-        error_message = r"❌ *Download Failed*\n\nThis could be due to a YouTube error or a protected video."
+        error_message = r"❌ *Download Failed*\n\nThis could be due to a YouTube error or a protected video\."
         await query.edit_message_caption(caption=error_message, parse_mode=ParseMode.MARKDOWN_V2)
     except Exception as e:
         logger.error(f"Generic error during download: {e}")
-        error_message = r"❌ *An Unexpected Error Occurred*\n\nPlease try again later."
+        error_message = r"❌ *An Unexpected Error Occurred*\n\nPlease try again later\."
         await query.edit_message_caption(caption=error_message, parse_mode=ParseMode.MARKDOWN_V2)
         
     finally:
