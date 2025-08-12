@@ -1,20 +1,17 @@
-# Use an official Python image
+# Use an official, slim Python image
 FROM python:3.11-slim
 
-# Install FFmpeg (this will work inside the Docker environment)
-RUN apt-get update && apt-get install -y ffmpeg
-
-# Set the working directory for your bot
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy your requirements file
+# Copy the requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# Install the Python libraries
-RUN pip install -r requirements.txt
+# Install the Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your bot's script
-COPY bot.py .
+# Copy the rest of your bot's code into the container
+COPY . .
 
-# This command will be run to start your bot
+# Set the command to run your bot when the container starts
 CMD ["python", "bot.py"]
